@@ -1,0 +1,74 @@
+@import "tailwindcss" source(none);
+@source "../public/index.html";
+@source "./client";
+
+@theme {
+  --color-ink: #211d30;
+  --color-canvas: #f6f5fa;
+  --color-panel: #211834;
+  --color-accent: #5935a2;
+  --color-line: #dfdbe9;
+  --color-muted: #61596f;
+  --color-danger: #a12344;
+}
+
+@layer base {
+  body { @apply bg-canvas text-ink; }
+  #root { @apply min-h-screen min-[651px]:grid min-[651px]:grid-cols-[205px_minmax(0,1fr)]; }
+  aside { @apply bg-panel p-3.5 text-white min-[651px]:px-[18px] min-[651px]:py-[30px]; }
+  nav { @apply flex flex-wrap gap-1 min-[651px]:grid min-[651px]:gap-2; }
+  nav button { @apply border-transparent bg-transparent text-left text-sm text-violet-100 hover:bg-[#3e2a5d] aria-[current=page]:bg-[#3e2a5d] min-[651px]:text-base; }
+  main { @apply w-full max-w-[1500px] px-3.5 py-6 min-[651px]:px-[clamp(20px,4vw,58px)] min-[651px]:py-9; }
+  header { @apply mb-6 flex items-center justify-between gap-3; }
+  h1, h2 { @apply font-bold leading-tight tracking-tight; }
+  h1 { @apply text-[clamp(1.9rem,4vw,2.7rem)]; }
+  h2 { @apply mb-4 text-xl; }
+  label { @apply mb-3.5 block text-sm font-semibold; }
+  input:not([type=checkbox]), textarea, select {
+    @apply mt-1.5 block w-full rounded-lg border border-violet-200 bg-[#fdfcff] px-3 py-2 text-ink;
+  }
+  input[type=checkbox] { @apply accent-accent; }
+  textarea { @apply resize-y; }
+  select {
+    @apply appearance-none pr-8;
+    background-image: linear-gradient(45deg, transparent 50%, #61596f 50%), linear-gradient(135deg, #61596f 50%, transparent 50%);
+    background-position: calc(100% - 16px) 50%, calc(100% - 11px) 50%;
+    background-size: 5px 5px;
+    background-repeat: no-repeat;
+  }
+  button {
+    @apply cursor-pointer rounded-lg border border-line bg-white px-3 py-2 font-semibold text-accent hover:bg-violet-50 disabled:cursor-default disabled:opacity-55;
+  }
+  :focus-visible { @apply outline-2 outline-offset-2 outline-violet-500; }
+  fieldset { @apply min-w-0 disabled:opacity-55; }
+  details { @apply mt-4; }
+  pre { @apply whitespace-pre-wrap; }
+  dialog {
+    @apply m-auto max-h-[calc(100vh-32px)] w-[min(800px,calc(100%-32px))] rounded-2xl border border-line bg-white p-[clamp(16px,4vw,26px)] text-ink;
+  }
+  dialog::backdrop { @apply bg-panel/65; }
+  dialog header { @apply mb-3; }
+  dialog h2 { @apply m-0; }
+}
+
+@layer components {
+  .brand { @apply mb-2.5 inline-block text-xl font-extrabold min-[651px]:mx-2.5 min-[651px]:mb-8; }
+  .brand span { @apply text-violet-200; }
+  .workspace { @apply grid items-start gap-5 min-[1001px]:grid-cols-2; }
+  .card { @apply rounded-2xl border border-line bg-white p-[clamp(16px,3vw,27px)] shadow-sm; }
+  .pair { @apply grid grid-cols-2 gap-3; }
+  .actions, .check { @apply flex flex-wrap items-center gap-2.5; }
+  .primary { @apply border-accent bg-accent text-white hover:bg-[#482781]; }
+  .hint, .status { @apply my-2 break-words text-sm text-muted; }
+  .status:empty { @apply hidden; }
+  .status[data-error] { @apply text-danger; }
+  .entry { @apply flex items-center justify-between gap-3 py-3 [overflow-wrap:anywhere]; }
+  .entry + .entry { @apply border-t border-line; }
+  .persona-actions { @apply flex shrink-0 items-center gap-1.5; }
+  .icon-button { @apply inline-grid size-10 shrink-0 place-items-center p-0; }
+  .icon-button svg { @apply size-[18px]; }
+  .danger { @apply text-danger hover:border-rose-200 hover:bg-rose-50; }
+  #prompt-markdown {
+    @apply my-3 max-h-[55vh] overflow-auto rounded-lg border border-line bg-canvas p-3.5 font-mono text-sm [overflow-wrap:anywhere];
+  }
+}
