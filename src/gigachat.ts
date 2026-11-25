@@ -5,10 +5,14 @@ import { Agent, fetch as undiciFetch, type RequestInit } from 'undici';
 
 let dispatcher: Agent | undefined;
 
+export function gigachatTls() {
+  const certificate = readFileSync(new URL('../certs/russian-trusted-root-ca.pem', import.meta.url), 'utf8');
+  return { ca: [...getCACertificates('default'), certificate] };
+}
+
 export function gigachatFetch(url: string, options: RequestInit) {
   if (!dispatcher) {
-    const certificate = readFileSync(new URL('../certs/russian-trusted-root-ca.pem', import.meta.url), 'utf8');
-    dispatcher = new Agent({ connect: { ca: [...getCACertificates('default'), certificate] } });
+    dispatcher = new Agent({ connect: gigachatTls() });
   }
   return undiciFetch(url, { ...options, dispatcher, redirect: 'error' });
 }
@@ -16,10 +20,10 @@ export function gigachatFetch(url: string, options: RequestInit) {
 let cached: { token: string; expiresAt: number } | undefined;
 let pending: Promise<string> | undefined;
 
-async function requestToken(key: string) {
+async function requestToken(key: string, send: typeof gigachatFetch) {
   let response: Awaited<ReturnType<typeof gigachatFetch>>;
   try {
-    response = await gigachatFetch('https://ngw.devices.sberbank.ru:9443/api/v2/oauth', {
+    response = await send('https://ngw.devices.sberbank.ru:9443/api/v2/oauth', {
       method: 'POST',
       headers: {
         Authorization: 'Basic ' + key,
@@ -47,9 +51,9 @@ async function requestToken(key: string) {
   return cached.token;
 }
 
-export function gigachatToken(key: string) {
+export function gigachatToken(key: string, send = gigachatFetch) {
   if (cached && cached.expiresAt > Date.now() + 60_000) return Promise.resolve(cached.token);
-  pending ??= requestToken(key).finally(() => { pending = undefined; });
+  pending ??= requestToken(key, send).finally(() => { pending = undefined; });
   return pending;
 }
 

@@ -8,6 +8,8 @@ export type Draft = {
 };
 export type Workspace = {
   defaultProvider: string;
+  proxyEnabled: boolean;
+  proxyAddress: string;
   personas: Profile[]; drafts: Draft[]; providers: Provider[]; fields: Record<string, string>; exampleContext: string;
 };
 export type GenerationRequest = Pick<Draft, 'persona' | 'mode' | 'task' | 'context' | 'target' | 'refinement' | 'provider'>;

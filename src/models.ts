@@ -1,5 +1,6 @@
 import { setTimeout as delay } from 'node:timers/promises';
-import { gigachatFetch, gigachatToken, invalidateGigachatToken } from './gigachat.ts';
+import { ProxyAgent, fetch as undiciFetch, type RequestInit as UndiciRequestInit } from 'undici';
+import { gigachatFetch, gigachatTls, gigachatToken, invalidateGigachatToken } from './gigachat.ts';
 
 const providers = [
   {
@@ -34,16 +35,69 @@ const providers = [
   },
 ];
 
-export function models() {
-  return providers.map(({ id, name, key, model }) => ({ id, name, model, ready: Boolean(key?.trim() && model?.trim()) }));
+const proxyAgents = new Map<string, { url: string; dispatcher: ProxyAgent }>();
+
+function proxyEndpoint(url: string) {
+  try {
+    const hostAndPort = /^(?:\[[0-9a-f:.]+\]|[a-z0-9.-]+):\d+$/i;
+    const endpoint = new URL(hostAndPort.test(url) ? 'http://' + url : url);
+    if ((endpoint.protocol !== 'http:' && endpoint.protocol !== 'https:') ||
+        endpoint.pathname !== '/' || endpoint.search || endpoint.hash) throw new Error();
+    decodeURIComponent(endpoint.username);
+    decodeURIComponent(endpoint.password);
+    return endpoint.href;
+  } catch {
+    throw new Error('Некорректный адрес прокси. Укажите IP:порт или полный HTTP/HTTPS URL.');
+  }
 }
 
-export async function complete(id: string, system: string, user: string, draftMode?: 'topic' | 'reply') {
+function proxyFetch(id: string, url: string) {
+  const transport = id === 'gigachat' ? 'gigachat' : 'default';
+  const current = proxyAgents.get(transport);
+  const dispatcher = current?.url === url ? current.dispatcher : new ProxyAgent({
+    uri: proxyEndpoint(url),
+    requestTls: id === 'gigachat' ? gigachatTls() : undefined,
+  });
+  if (current?.dispatcher !== dispatcher) {
+    proxyAgents.set(transport, { url, dispatcher });
+    void current?.dispatcher.close().catch(() => {});
+  }
+  return (endpoint: string, options: UndiciRequestInit) =>
+    undiciFetch(endpoint, { ...options, dispatcher, redirect: 'error' });
+}
+
+export async function checkProxy(url: string) {
+  const provider = providers.find(item => item.key?.trim() && item.model?.trim()) ?? providers[0];
+  const dispatcher = new ProxyAgent({
+    uri: proxyEndpoint(url),
+    requestTls: provider.id === 'gigachat' ? gigachatTls() : undefined,
+  });
+  try {
+    // Any HTTP response from the provider confirms that CONNECT and TLS succeeded.
+    await undiciFetch(provider.endpoint, {
+      method: 'HEAD', dispatcher, redirect: 'manual', signal: AbortSignal.timeout(8000),
+    });
+  } catch {
+    throw new Error('Прокси недоступен. Проверьте адрес, порт и данные авторизации.');
+  } finally {
+    await dispatcher.destroy();
+  }
+}
+
+export function models() {
+  return providers.map(({ id, name, key, model }) => ({
+    id, name, model, ready: Boolean(key?.trim() && model?.trim()),
+  }));
+}
+
+export async function complete(id: string, system: string, user: string, options: { draftMode?: 'topic' | 'reply'; proxyUrl?: string } = {}) {
+  const { draftMode, proxyUrl } = options;
   const provider = providers.find(item => item.id === id);
   if (!provider?.key?.trim() || !provider.model?.trim()) throw new Error('Настройте ключ и модель провайдера в переменных окружения.');
   const yandex = id === 'yandex';
   const giga = id === 'gigachat';
-  const token = giga ? await gigachatToken(provider.key.trim()) : provider.key;
+  const sendProxy = proxyUrl ? proxyFetch(id, proxyUrl) : undefined;
+  const token = giga ? await gigachatToken(provider.key.trim(), sendProxy) : provider.key;
   const body = yandex ? {
     modelUri: provider.model,
     completionOptions: { stream: false, maxTokens: '2500' },
@@ -72,7 +126,7 @@ export async function complete(id: string, system: string, user: string, draftMo
     } : {}),
     messages: [{ role: 'system', content: system }, { role: 'user', content: user }],
   };
-  const send = giga ? gigachatFetch : fetch;
+  const send = sendProxy ?? (giga ? gigachatFetch : fetch);
   const request = {
     method: 'POST',
     headers: {
@@ -100,6 +154,9 @@ export async function complete(id: string, system: string, user: string, draftMo
       }
     }
   } catch {
+    if (sendProxy && !request.signal.aborted) {
+      throw new Error('Запрос через прокси не удался. Проверьте адрес, доступ и учётные данные прокси.');
+    }
     throw new Error('Модель недоступна или не ответила вовремя. Повторите запрос.');
   }
 

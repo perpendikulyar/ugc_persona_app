@@ -2,7 +2,7 @@ import { createServer, type IncomingMessage } from 'node:http';
 import { readFileSync, mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
-import { complete, models } from './models.ts';
+import { checkProxy, complete, models } from './models.ts';
 import { buildDraftPrompt } from './prompt.ts';
 import { helga } from './helga.ts';
 
@@ -35,6 +35,13 @@ db.exec(`
     updated TEXT NOT NULL,
     FOREIGN KEY (persona, version) REFERENCES profiles(persona, version)
   ) STRICT;
+`);
+
+// Import the previous configuration once when it has a single unambiguous address.
+db.exec(`
+  INSERT OR IGNORE INTO settings (key, value)
+  SELECT 'proxy_url', CASE WHEN COUNT(DISTINCT value) = 1 THEN MIN(value) ELSE '' END
+  FROM settings WHERE key LIKE 'proxy_url:%' AND value <> '';
 `);
 
 const fields = {
@@ -123,6 +130,22 @@ function parseDraft(content: string, topic: boolean) {
   }
 }
 
+function proxyEnabled() {
+  return Boolean(savedProxy()) && db.prepare("SELECT value FROM settings WHERE key = 'proxy_enabled'").get()?.value === '1';
+}
+
+function savedProxy() {
+  return String(db.prepare("SELECT value FROM settings WHERE key = 'proxy_url'").get()?.value ?? '');
+}
+
+function proxySettings() {
+  const address = savedProxy();
+  return {
+    proxyEnabled: proxyEnabled(),
+    proxyAddress: address.replace(/^((?:https?):\/\/)[^/]*@/i, '$1'),
+  };
+}
+
 const web = new Map([
   ['/', ['index.html', 'text/html']],
   ['/style.css', ['style.css', 'text/css']],
@@ -155,12 +178,12 @@ const server = createServer(async (request, response) => {
         const drafts = db.prepare('SELECT id, persona, version, data, updated FROM drafts ORDER BY updated DESC').all()
           .map(row => ({ id: row.id, persona: row.persona, version: row.version, updated: row.updated, ...JSON.parse(String(row.data)) }));
         const defaultProvider = db.prepare("SELECT value FROM settings WHERE key = 'default_provider'").get()?.value ?? '';
-        send({ personas, drafts, fields, providers: models(), exampleContext, defaultProvider });
+        send({ personas, drafts, fields, providers: models(), exampleContext, defaultProvider, ...proxySettings() });
         return;
       }
     }
 
-    if (request.method === 'POST' && ['/api/persona', '/api/persona/delete', '/api/probe', '/api/settings/default-provider', '/api/generate', '/api/draft'].includes(route)) {
+    if (request.method === 'POST' && ['/api/persona', '/api/persona/delete', '/api/probe', '/api/settings/default-provider', '/api/settings/proxy', '/api/settings/proxy/check', '/api/settings/proxy/address', '/api/generate', '/api/draft'].includes(route)) {
       const input = await readInput(request);
       if (route === '/api/persona') {
         const id = field(input, 'id', 50) || crypto.randomUUID();
@@ -182,8 +205,33 @@ const server = createServer(async (request, response) => {
           ON CONFLICT(key) DO UPDATE SET value = excluded.value`).run(id);
         send({ defaultProvider: id });
       }
+      if (route === '/api/settings/proxy') {
+        if (typeof input.enabled !== 'boolean') throw new Error('Укажите состояние прокси.');
+        if (input.enabled && !savedProxy()) {
+          throw new Error('Сохраните адрес прокси в настройках.');
+        }
+        db.prepare(`INSERT INTO settings (key, value) VALUES ('proxy_enabled', ?)
+          ON CONFLICT(key) DO UPDATE SET value = excluded.value`).run(input.enabled ? '1' : '0');
+        send({ proxyEnabled: input.enabled });
+      }
+      if (route === '/api/settings/proxy/check' || route === '/api/settings/proxy/address') {
+        const address = field(input, 'address', 2048);
+        const saving = route === '/api/settings/proxy/address';
+        if (address) await checkProxy(address);
+        else if (!saving) await checkProxy(savedProxy());
+        if (saving) {
+          if (address) {
+            db.prepare(`INSERT INTO settings (key, value) VALUES ('proxy_url', ?)
+              ON CONFLICT(key) DO UPDATE SET value = excluded.value`).run(address);
+          } else {
+            db.exec("UPDATE settings SET value = CASE key WHEN 'proxy_enabled' THEN '0' ELSE '' END WHERE key IN ('proxy_url', 'proxy_enabled')");
+          }
+        }
+        send(saving ? proxySettings() : { ok: true });
+      }
       if (route === '/api/probe') {
-        await complete(field(input, 'provider'), 'Ответь одним словом.', 'Проверка подключения.');
+        const id = field(input, 'provider');
+        await complete(id, 'Ответь одним словом.', 'Проверка подключения.', { proxyUrl: proxyEnabled() ? savedProxy() : '' });
         send({ ok: true });
       }
       if (route === '/api/generate') {
@@ -202,7 +250,8 @@ const server = createServer(async (request, response) => {
           send({ system, user });
           return;
         }
-        const result = await complete(field(input, 'provider'), system, user, values.mode);
+        const id = field(input, 'provider');
+        const result = await complete(id, system, user, { draftMode: values.mode, proxyUrl: proxyEnabled() ? savedProxy() : '' });
         send({
           id: crypto.randomUUID(), persona: persona.id, personaName: persona.name, version: persona.version,
           provider: result.provider, model: result.model, ...values,

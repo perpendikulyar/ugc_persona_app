@@ -4,6 +4,7 @@ import { api, type Draft, type GenerationRequest, type Workspace } from './api';
 import { Status, useAction } from './components';
 import { Editor } from './editor';
 import { Personas } from './personas';
+import { ProxyAddress } from './proxy';
 
 const sections = { editor: 'Редактор', personas: 'Персонажи', history: 'История', settings: 'Настройки' } as const;
 type Section = keyof typeof sections;
@@ -13,10 +14,14 @@ function initialProvider(providers: Workspace['providers'], defaultProvider: str
   return ready.find(item => item.id === defaultProvider)?.id ?? ready[0]?.id ?? '';
 }
 
-function Settings({ providers, defaultProvider, onDefaultSaved }: {
+function Settings({ providers, defaultProvider, onDefaultSaved, proxyEnabled, proxyAddress, onProxySaved, onProxyAddressSaved }: {
+  onProxyAddressSaved: (settings: Pick<Workspace, 'proxyEnabled' | 'proxyAddress'>) => void;
+  proxyAddress: string; proxyEnabled: boolean; onProxySaved: (enabled: boolean) => void;
   providers: Workspace['providers']; defaultProvider: string; onDefaultSaved: (id: string) => void;
 }) {
   const check = useAction();
+  const proxy = useAction();
+  const proxyConfigured = Boolean(proxyAddress);
   const save = useAction();
   const [selection, setSelection] = useState(defaultProvider);
   const ready = providers.filter(item => item.ready);
@@ -44,12 +49,32 @@ function Settings({ providers, defaultProvider, onDefaultSaved }: {
       <button className="primary" disabled={save.pending || selection === defaultProvider}>Сохранить</button>
       <Status {...save.status} />
     </form>
+    <div className="card mb-5">
+      <h2>Исходящий прокси</h2>
+      <label className="check">
+        <input type="checkbox" checked={proxyEnabled} disabled={proxy.pending || check.pending || (!proxyConfigured && !proxyEnabled)}
+          onChange={event => {
+            const enabled = event.target.checked;
+            void proxy.run(async () => {
+              const result = await api<{ proxyEnabled: boolean }>('settings/proxy', { enabled });
+              onProxySaved(result.proxyEnabled);
+              return result.proxyEnabled ? 'Прокси включён.' : 'Прокси выключен.';
+            });
+          }} />
+        {proxyEnabled ? 'Вкл' : 'Выкл'}
+      </label>
+      <p className="hint">{proxyConfigured
+        ? 'При включении все провайдеры используют этот адрес.'
+        : 'Укажите и сохраните общий адрес прокси.'}</p>
+      <Status {...proxy.status} />
+      <ProxyAddress savedAddress={proxyAddress} onSaved={onProxyAddressSaved} />
+    </div>
     <div className="card">
       <h2>Подключения</h2>
       <p className="hint">Ключи и идентификаторы моделей задаются на компьютере в файле .env.</p>
       {providers.map(item => <div className="entry" key={item.id}>
-        <span>{item.name + (item.ready ? ' · ' + item.model : ' · требуется настройка')}</span>
-        <button type="button" disabled={!item.ready || check.pending} onClick={() => void check.run(async () => {
+        <span>{item.name + (item.ready ? ' · ' + item.model + (proxyEnabled ? ' · через прокси' : ' · напрямую') : ' · требуется настройка')}</span>
+        <button type="button" disabled={!item.ready || check.pending || proxy.pending} onClick={() => void check.run(async () => {
           await api('probe', { provider: item.id });
           return item.name + ' отвечает.';
         })}>Проверить</button>
@@ -122,6 +147,10 @@ function App({ initial }: { initial: Workspace }) {
         </div>
       </section>
       <section hidden={section !== 'settings'}><Settings providers={workspace.providers} defaultProvider={workspace.defaultProvider}
+        proxyEnabled={workspace.proxyEnabled}
+        proxyAddress={workspace.proxyAddress}
+        onProxyAddressSaved={settings => setWorkspace(current => ({ ...current, ...settings }))}
+        onProxySaved={enabled => setWorkspace(current => ({ ...current, proxyEnabled: enabled }))}
         onDefaultSaved={id => {
           setWorkspace(current => ({ ...current, defaultProvider: id }));
           setRequest(current => ({ ...current, provider: initialProvider(workspace.providers, id) }));
